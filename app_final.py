@@ -1,10 +1,19 @@
 import csv
+import logging
+import os
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
 
-APP_VERSION = "0.1.1"
-RECIPES_FILE = Path(__file__).parent / "recipes.csv"
+APP_VERSION = "0.3.0"
+RECIPES_FILE = Path(os.getenv("RECIPES_FILE", Path(__file__).parent / "recipes.csv"))
+MAX_RESULTS = int(os.getenv("MAX_RESULTS", "10"))
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
+logger = logging.getLogger("what_to_cook")
 
 def load_recipes():
     recipes = []
@@ -19,7 +28,8 @@ def load_recipes():
 
 
 RECIPES = load_recipes()
-
+logger.info("Загружено рецептов: %d из файла %s", len(RECIPES), RECIPES_FILE)
+logger.info("Версия %s, MAX_RESULTS=%d", APP_VERSION, MAX_RESULTS)
 
 app = FastAPI(title="Что приготовить")
 
@@ -44,6 +54,7 @@ def get_recipe(recipe_id: int):
     for recipe in RECIPES:
         if recipe["id"] == recipe_id:
             return recipe
+    logger.warning("Блюдо не найдено: id=%d", recipe_id)
     raise HTTPException(status_code=404, detail="Блюдо не найдено") 
 
 @app.get("/ingredients")
@@ -58,6 +69,7 @@ def list_ingredients():
 def match_recipes(products: str):
     wanted = {p.strip().lower() for p in products.split(",") if p.strip()}
     if not wanted:
+        logger.warning("Пустой запрос подбора: %r", products)
         raise HTTPException(status_code=400, detail="Укажите хотя бы один продукт")
 
     results = []
@@ -74,4 +86,7 @@ def match_recipes(products: str):
         })
 
     results.sort(key=lambda r: (len(r["missing"]), -len(r["matched"])))
-    return {"products": sorted(wanted), "found": len(results), "recipes": results}
+    total = len(results)
+    results = results[:MAX_RESULTS]
+    logger.info("Подбор: %s -> найдено %d, показано %d", ", ".join(sorted(wanted)), total, len(results))
+    return {"products": sorted(wanted), "found": total, "shown": len(results), "recipes": results}
